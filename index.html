@@ -1,0 +1,573 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>MC Found Tracker</title>
+
+  <!-- Tailwind via CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <style>
+    :root { color-scheme: light; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; }
+    .card { box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 10px 30px rgba(0,0,0,.08); }
+    .btn { transition: transform .05s ease, background-color .12s ease, border-color .12s ease; }
+    .btn:active { transform: translateY(1px); }
+  </style>
+</head>
+
+<body class="bg-slate-50 text-slate-900">
+  <div class="max-w-6xl mx-auto px-4 py-6">
+    <!-- Top bar -->
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div>
+        <h1 class="text-2xl sm:text-3xl font-semibold tracking-tight">Minecraft Found Tracker</h1>
+        <p class="text-slate-600 mt-1">
+          Shared “found” checklist. Click an item → it turns green + appears in the Found list. Realtime sync.
+        </p>
+      </div>
+
+      <div class="flex flex-col sm:flex-row gap-2 sm:items-center">
+        <div class="bg-white rounded-2xl card p-3 flex items-center gap-2">
+          <span class="text-slate-500 text-sm">World</span>
+          <input id="worldInput"
+                 class="mono px-2 py-1 rounded-xl bg-slate-100 outline-none w-48"
+                 placeholder="e.g. caelan-survival" />
+          <button id="loadWorldBtn"
+                  class="btn px-3 py-1.5 rounded-xl bg-slate-900 text-white hover:bg-slate-800">
+            Load
+          </button>
+        </div>
+
+        <div id="statusPill"
+             class="mono text-xs px-3 py-2 rounded-2xl bg-slate-100 text-slate-600">
+          offline
+        </div>
+      </div>
+    </div>
+
+    <!-- Warning if no Firebase config -->
+    <div id="firebaseWarning" class="mt-4 hidden bg-amber-50 border border-amber-200 rounded-2xl p-4">
+      <div class="flex items-start gap-3">
+        <div class="mt-0.5">⚠️</div>
+        <div>
+          <div class="font-medium">Firebase not configured</div>
+          <div class="text-sm text-slate-700 mt-1">
+            The UI works locally, but it won’t sync between you and Caelan until you paste your Firebase config.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Controls -->
+    <div class="mt-6 grid grid-cols-1 lg:grid-cols-12 gap-4">
+      <div class="lg:col-span-8 bg-white rounded-2xl card p-4">
+        <div class="flex flex-col sm:flex-row gap-3 sm:items-end sm:justify-between">
+          <div class="flex-1">
+            <label class="text-xs font-medium text-slate-500">Search</label>
+            <input id="searchInput"
+                   class="mt-1 w-full px-3 py-2 rounded-2xl bg-slate-100 outline-none"
+                   placeholder="Search items… (torch, diamond, piston)" />
+          </div>
+
+          <div class="flex gap-2">
+            <button id="showAllBtn"
+                    class="btn px-3 py-2 rounded-2xl bg-slate-200 hover:bg-slate-300">
+              Show All
+            </button>
+            <button id="showMissingBtn"
+                    class="btn px-3 py-2 rounded-2xl bg-slate-900 text-white hover:bg-slate-800">
+              Show Missing
+            </button>
+          </div>
+        </div>
+
+        <div class="mt-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2" id="grid">
+          <!-- item buttons injected here -->
+        </div>
+
+        <div id="gridEmpty" class="hidden mt-8 text-center text-slate-600">
+          <div class="text-lg font-medium">No matches.</div>
+          <div class="text-sm mt-1">Try a different search term.</div>
+        </div>
+      </div>
+
+      <!-- Found list -->
+      <div class="lg:col-span-4 bg-white rounded-2xl card p-4">
+        <div class="flex items-center justify-between">
+          <h2 class="font-semibold">Found</h2>
+          <div class="mono text-xs text-slate-500">
+            <span id="foundCount">0</span>/<span id="totalCount">0</span>
+          </div>
+        </div>
+
+        <div class="mt-3 w-full bg-slate-100 rounded-full h-3 overflow-hidden">
+          <div id="progressBar" class="h-3 bg-emerald-600 rounded-full" style="width:0%"></div>
+        </div>
+
+        <div class="mt-4 flex gap-2">
+          <button id="exportBtn"
+                  class="btn px-3 py-2 rounded-2xl bg-slate-200 hover:bg-slate-300">
+            Export
+          </button>
+          <button id="importBtn"
+                  class="btn px-3 py-2 rounded-2xl bg-slate-200 hover:bg-slate-300">
+            Import
+          </button>
+          <button id="clearBtn"
+                  class="btn px-3 py-2 rounded-2xl bg-rose-600 text-white hover:bg-rose-700">
+            Clear
+          </button>
+          <input id="importFile" type="file" accept="application/json" class="hidden">
+        </div>
+
+        <div class="mt-4 max-h-[56vh] overflow-auto pr-1" id="foundList">
+          <!-- found items injected here -->
+        </div>
+
+        <div id="foundEmpty" class="hidden mt-10 text-center text-slate-600">
+          <div class="text-lg font-medium">Nothing found yet.</div>
+          <div class="text-sm mt-1">Click items in the grid to mark them found.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal -->
+    <div id="modal" class="fixed inset-0 bg-black/40 hidden items-center justify-center p-4">
+      <div class="bg-white rounded-2xl card max-w-2xl w-full p-4">
+        <div class="flex items-center justify-between">
+          <h3 class="font-semibold" id="modalTitle">Export</h3>
+          <button id="closeModal" class="btn px-2 py-1 rounded-xl bg-slate-100 hover:bg-slate-200">Close</button>
+        </div>
+        <p class="text-sm text-slate-600 mt-1" id="modalHelp"></p>
+        <textarea id="modalText" class="mt-3 w-full h-56 p-3 rounded-2xl bg-slate-100 mono text-xs outline-none"></textarea>
+        <div class="mt-3 flex gap-2">
+          <button id="copyBtn" class="btn px-3 py-2 rounded-2xl bg-slate-900 text-white hover:bg-slate-800">Copy</button>
+          <button id="applyImportBtn" class="btn px-3 py-2 rounded-2xl bg-emerald-600 text-white hover:bg-emerald-700 hidden">Apply Import</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script type="module">
+  /***********************************************************************
+   * CONFIG
+   **********************************************************************/
+  const ITEMS_URL = "./items.json";
+
+  // Paste your Firebase config here (from Firebase console).
+  // Leaving it blank runs in offline mode (no realtime sync).
+  const firebaseConfig = {
+    // apiKey: "…",
+    // authDomain: "…",
+    // projectId: "…",
+    // appId: "…"
+  };
+
+  /***********************************************************************
+   * STATE
+   **********************************************************************/
+  const $ = (id) => document.getElementById(id);
+
+  const state = {
+    items: [],           // [{id, name}]
+    found: new Set(),    // item ids found
+    search: "",
+    showMode: "missing", // "all" | "missing"
+    world: "",
+    fs: null,
+    helpers: null,
+    unsub: null,
+    online: false
+  };
+
+  function normalize(s){ return (s||"").toLowerCase().trim(); }
+  function pct(n,d){ return d ? Math.max(0, Math.min(100, Math.round((n/d)*100))) : 0; }
+
+  function setStatus(text, mode){
+    const pill = $("statusPill");
+    pill.textContent = text;
+    const base = "mono text-xs px-3 py-2 rounded-2xl";
+    if (mode === "live") pill.className = base + " bg-emerald-100 text-emerald-700";
+    else if (mode === "warn") pill.className = base + " bg-amber-100 text-amber-800";
+    else pill.className = base + " bg-slate-100 text-slate-600";
+  }
+
+  function stopListener(){
+    if (typeof state.unsub === "function") state.unsub();
+    state.unsub = null;
+  }
+
+  /***********************************************************************
+   * LOAD ITEMS
+   * items.json format:
+   * { "items": [ { "id": "torch", "name": "Torch" }, ... ] }
+   **********************************************************************/
+  async function loadItems(){
+    const res = await fetch(ITEMS_URL, { cache: "no-store" });
+    if (!res.ok) throw new Error("Failed to load items.json");
+    const data = await res.json();
+    if (!data || !Array.isArray(data.items)) throw new Error("items.json must be { items: [...] }");
+
+    state.items = data.items.map((x) => ({
+      id: String(x.id ?? x.name ?? "").trim(),
+      name: String(x.name ?? x.id ?? "").trim()
+    })).filter(x => x.id && x.name);
+
+    // stable ordering
+    state.items.sort((a,b) => a.name.localeCompare(b.name));
+    $("totalCount").textContent = String(state.items.length);
+  }
+
+  /***********************************************************************
+   * FIREBASE INIT (Firestore realtime sync)
+   * Data model:
+   * worlds/{world}/state/found  { found: [id1,id2,...], updatedAt:number }
+   **********************************************************************/
+  async function initFirebase(){
+    const hasConfig = firebaseConfig?.apiKey && firebaseConfig?.projectId && firebaseConfig?.appId;
+    if (!hasConfig) {
+      $("firebaseWarning").classList.remove("hidden");
+      setStatus("offline", "off");
+      return;
+    }
+    $("firebaseWarning").classList.add("hidden");
+    setStatus("connecting…", "warn");
+
+    const [{ initializeApp }, { getFirestore, doc, setDoc, onSnapshot }] = await Promise.all([
+      import("https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js"),
+      import("https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js")
+    ]);
+
+    const app = initializeApp(firebaseConfig);
+    state.fs = getFirestore(app);
+    state.helpers = { doc, setDoc, onSnapshot };
+
+    setStatus("ready", "warn");
+  }
+
+  function worldDocRef(){
+    const { doc } = state.helpers;
+    return doc(state.fs, "worlds", state.world, "state", "found");
+  }
+
+  async function writeFoundToFirestore(){
+    if (!state.fs || !state.world) return;
+    const { setDoc } = state.helpers;
+    await setDoc(worldDocRef(), {
+      found: Array.from(state.found),
+      updatedAt: Date.now()
+    }, { merge: true });
+  }
+
+  function startRealtime(world){
+    if (!state.fs) return;
+
+    stopListener();
+    setStatus("connecting…", "warn");
+
+    const { onSnapshot } = state.helpers;
+    state.unsub = onSnapshot(worldDocRef(), (snap) => {
+      state.online = true;
+      setStatus("live", "live");
+
+      const data = snap.data();
+      if (data?.found && Array.isArray(data.found)) {
+        state.found = new Set(data.found);
+        renderEverything();
+      } else {
+        // First time: create doc so both clients converge
+        writeFoundToFirestore().catch(console.error);
+      }
+    }, (err) => {
+      console.error(err);
+      state.online = false;
+      setStatus("offline", "off");
+    });
+  }
+
+  /***********************************************************************
+   * RENDER
+   **********************************************************************/
+  function filteredItems(){
+    const q = normalize(state.search);
+    return state.items.filter(it => {
+      const isFound = state.found.has(it.id);
+      if (state.showMode === "missing" && isFound) return false;
+      if (!q) return true;
+      return normalize(it.name).includes(q) || normalize(it.id).includes(q);
+    });
+  }
+
+  function renderGrid(){
+    const grid = $("grid");
+    const empty = $("gridEmpty");
+    const items = filteredItems();
+
+    if (items.length === 0) {
+      grid.innerHTML = "";
+      empty.classList.remove("hidden");
+      return;
+    }
+    empty.classList.add("hidden");
+
+    grid.innerHTML = items.map(it => {
+      const isFound = state.found.has(it.id);
+
+      const base = "btn w-full text-left px-3 py-2 rounded-2xl border text-sm leading-tight";
+      const foundCls = " bg-emerald-600 border-emerald-700 text-white hover:bg-emerald-700";
+      const missingCls = " bg-white border-slate-200 hover:bg-slate-50";
+
+      return `
+        <button
+          class="${base}${isFound ? foundCls : missingCls}"
+          data-id="${escapeHtml(it.id)}"
+          title="${escapeHtml(it.id)}"
+        >
+          <div class="flex items-start justify-between gap-2">
+            <div class="min-w-0">
+              <div class="font-medium truncate">${escapeHtml(it.name)}</div>
+              <div class="mono text-xs opacity-70 truncate">${escapeHtml(it.id)}</div>
+            </div>
+            <div class="shrink-0">
+              ${isFound ? `<span class="text-lg">✅</span>` : `<span class="text-lg opacity-30">⬜</span>`}
+            </div>
+          </div>
+        </button>
+      `;
+    }).join("");
+  }
+
+  function renderFoundList(){
+    const list = $("foundList");
+    const empty = $("foundEmpty");
+
+    const foundItems = state.items.filter(it => state.found.has(it.id))
+      .sort((a,b) => a.name.localeCompare(b.name));
+
+    $("foundCount").textContent = String(foundItems.length);
+    $("totalCount").textContent = String(state.items.length);
+    $("progressBar").style.width = pct(foundItems.length, state.items.length) + "%";
+
+    if (foundItems.length === 0) {
+      list.innerHTML = "";
+      empty.classList.remove("hidden");
+      return;
+    }
+    empty.classList.add("hidden");
+
+    list.innerHTML = foundItems.map(it => `
+      <div class="flex items-center justify-between gap-2 p-2 rounded-2xl hover:bg-slate-50">
+        <div class="min-w-0">
+          <div class="font-medium truncate">${escapeHtml(it.name)}</div>
+          <div class="mono text-xs text-slate-500 truncate">${escapeHtml(it.id)}</div>
+        </div>
+        <button class="btn px-3 py-2 rounded-2xl bg-slate-200 hover:bg-slate-300" data-unfound="${escapeHtml(it.id)}">
+          Unfind
+        </button>
+      </div>
+    `).join("");
+  }
+
+  function renderEverything(){
+    renderGrid();
+    renderFoundList();
+  }
+
+  function escapeHtml(s){
+    return (s ?? "").toString()
+      .replaceAll("&","&amp;").replaceAll("<","&lt;")
+      .replaceAll(">","&gt;").replaceAll('"',"&quot;");
+  }
+
+  /***********************************************************************
+   * INTERACTIONS
+   **********************************************************************/
+  async function toggleFound(id){
+    if (!id) return;
+    if (state.found.has(id)) state.found.delete(id);
+    else state.found.add(id);
+
+    renderEverything();
+
+    // Push change to shared backend if configured
+    try { await writeFoundToFirestore(); }
+    catch (e) { console.error(e); }
+  }
+
+  function setWorld(world){
+    const w = normalize(world).replaceAll(" ", "-");
+    state.world = w || "survival-01";
+    $("worldInput").value = state.world;
+
+    localStorage.setItem("mc_found_world", state.world);
+    const url = new URL(window.location.href);
+    url.searchParams.set("world", state.world);
+    history.replaceState({}, "", url.toString());
+
+    if (state.fs) startRealtime(state.world);
+    renderEverything();
+  }
+
+  /***********************************************************************
+   * EXPORT / IMPORT (handy even with Firebase)
+   **********************************************************************/
+  function openModal({title, help, text, mode}){
+    $("modalTitle").textContent = title;
+    $("modalHelp").textContent = help;
+    $("modalText").value = text || "";
+    $("applyImportBtn").classList.toggle("hidden", mode !== "import");
+    $("modal").classList.remove("hidden");
+    $("modal").classList.add("flex");
+  }
+  function closeModal(){
+    $("modal").classList.add("hidden");
+    $("modal").classList.remove("flex");
+  }
+
+  function exportState(){
+    const payload = {
+      world: state.world,
+      exportedAt: new Date().toISOString(),
+      found: Array.from(state.found)
+    };
+    openModal({
+      title: "Export",
+      help: "Copy this as a backup (or share it if Firebase is offline).",
+      text: JSON.stringify(payload, null, 2),
+      mode: "export"
+    });
+  }
+
+  async function importStateFromText(text){
+    const data = JSON.parse(text);
+    if (!data || !Array.isArray(data.found)) throw new Error("Invalid import file/code.");
+    state.found = new Set(data.found);
+    renderEverything();
+    await writeFoundToFirestore();
+  }
+
+  /***********************************************************************
+   * INIT
+   **********************************************************************/
+  function hookUI(){
+    $("searchInput").addEventListener("input", (e) => {
+      state.search = e.target.value;
+      renderGrid();
+    });
+
+    $("showAllBtn").addEventListener("click", () => {
+      state.showMode = "all";
+      $("showAllBtn").classList.add("bg-slate-900","text-white");
+      $("showAllBtn").classList.remove("bg-slate-200");
+      $("showMissingBtn").classList.remove("bg-slate-900","text-white");
+      $("showMissingBtn").classList.add("bg-slate-200");
+      renderGrid();
+    });
+
+    $("showMissingBtn").addEventListener("click", () => {
+      state.showMode = "missing";
+      $("showMissingBtn").classList.add("bg-slate-900","text-white");
+      $("showMissingBtn").classList.remove("bg-slate-200");
+      $("showAllBtn").classList.remove("bg-slate-900","text-white");
+      $("showAllBtn").classList.add("bg-slate-200");
+      renderGrid();
+    });
+
+    $("grid").addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-id]");
+      if (!btn) return;
+      toggleFound(btn.getAttribute("data-id"));
+    });
+
+    $("foundList").addEventListener("click", (e) => {
+      const btn = e.target.closest("button[data-unfound]");
+      if (!btn) return;
+      toggleFound(btn.getAttribute("data-unfound"));
+    });
+
+    $("loadWorldBtn").addEventListener("click", () => setWorld($("worldInput").value));
+    $("worldInput").addEventListener("keydown", (e) => { if (e.key === "Enter") setWorld($("worldInput").value); });
+
+    $("exportBtn").addEventListener("click", exportState);
+    $("importBtn").addEventListener("click", () => {
+      openModal({
+        title: "Import",
+        help: "Paste an export JSON here, or import from file.",
+        text: "",
+        mode: "import"
+      });
+    });
+
+    $("clearBtn").addEventListener("click", async () => {
+      if (!confirm("Clear all found items for this world?")) return;
+      state.found = new Set();
+      renderEverything();
+      await writeFoundToFirestore();
+    });
+
+    $("closeModal").addEventListener("click", closeModal);
+    $("modal").addEventListener("click", (e) => { if (e.target === $("modal")) closeModal(); });
+
+    $("copyBtn").addEventListener("click", async () => {
+      try { await navigator.clipboard.writeText($("modalText").value); } catch {}
+    });
+
+    $("applyImportBtn").addEventListener("click", async () => {
+      try {
+        await importStateFromText($("modalText").value);
+        closeModal();
+      } catch (e) {
+        alert("Import failed: " + (e?.message || e));
+      }
+    });
+
+    // file import
+    $("importBtn").addEventListener("dblclick", () => $("importFile").click());
+    $("importFile").addEventListener("change", async (e) => {
+      const f = e.target.files?.[0];
+      if (!f) return;
+      try {
+        const text = await f.text();
+        await importStateFromText(text);
+      } catch (err) {
+        alert("Import failed: " + (err?.message || err));
+      } finally {
+        e.target.value = "";
+      }
+    });
+
+    // quick focus search
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "/" && document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") {
+        e.preventDefault();
+        $("searchInput").focus();
+      }
+    });
+  }
+
+  async function main(){
+    hookUI();
+    await loadItems();
+    await initFirebase();
+
+    // default showMissing "selected" look
+    $("showMissingBtn").classList.add("bg-slate-900","text-white");
+    $("showMissingBtn").classList.remove("bg-slate-200");
+
+    // world from URL or localStorage
+    const url = new URL(window.location.href);
+    const w = url.searchParams.get("world") || localStorage.getItem("mc_found_world") || "survival-01";
+    setWorld(w);
+
+    if (!state.fs) setStatus("offline", "off");
+  }
+
+  main().catch((e) => {
+    console.error(e);
+    alert("Startup error: " + (e?.message || e));
+  });
+</script>
+</body>
+</html>
