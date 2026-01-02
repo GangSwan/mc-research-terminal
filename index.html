@@ -228,27 +228,35 @@
    * Data model:
    * worlds/{world}/state/found  { found: [id1,id2,...], updatedAt:number }
    **********************************************************************/
-  async function initFirebase(){
-    const hasConfig = firebaseConfig?.apiKey && firebaseConfig?.projectId && firebaseConfig?.appId;
-    if (!hasConfig) {
-      $("firebaseWarning").classList.remove("hidden");
-      setStatus("offline", "off");
-      return;
-    }
-    $("firebaseWarning").classList.add("hidden");
-    setStatus("connecting…", "warn");
+ async function initFirebase(){
+  const hasConfig = firebaseConfig?.apiKey && firebaseConfig?.projectId && firebaseConfig?.appId;
+  if (!hasConfig) {
+    $("firebaseWarning").classList.remove("hidden");
+    setStatus("offline", "off");
+    return;
+  }
+  $("firebaseWarning").classList.add("hidden");
+  setStatus("connecting…", "warn");
 
-    const [{ initializeApp }, { getFirestore, doc, setDoc, onSnapshot }] = await Promise.all([
+  const [{ initializeApp }, { getAuth, signInAnonymously }, { getFirestore, doc, setDoc, onSnapshot }] =
+    await Promise.all([
       import("https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js"),
+      import("https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js"),
       import("https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js")
     ]);
 
-    const app = initializeApp(firebaseConfig);
-    state.fs = getFirestore(app);
-    state.helpers = { doc, setDoc, onSnapshot };
+  const app = initializeApp(firebaseConfig);
 
-    setStatus("ready", "warn");
-  }
+  // ✅ This is the missing piece
+  const auth = getAuth(app);
+  await signInAnonymously(auth);
+
+  state.fs = getFirestore(app);
+  state.helpers = { doc, setDoc, onSnapshot };
+
+  setStatus("ready", "warn");
+}
+
 
   function worldDocRef(){
     const { doc } = state.helpers;
@@ -574,4 +582,5 @@
 </script>
 </body>
 </html>
+
 
